@@ -1,0 +1,22 @@
+[package]
+name = "indie-games-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "indie_games_protocol"
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+borsh = { version = "1.5", features = ["derive"] }
+solana-program = "=2.1.0"
+thiserror = "1.0"
+spl-token = { version = "7", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
+
+[dev-dependencies]
+solana-program-test = "2.1"
+solana-sdk = "2.1"
