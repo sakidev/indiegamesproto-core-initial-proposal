@@ -18,9 +18,10 @@ pub struct UserAccount {
     pub total_wins: u32,
     pub total_usd_spent_micro: u64,
     pub total_usd_rewards_micro: u64,
+    pub created_at: u64,
 }
 
 impl UserAccount {
-    // is_initialized + version + bump + owner + game + username + current_ranked_game + total_ranked_games_played + total_wins + total_usd_spent_micro + total_usd_rewards_micro = 146 bytes
-    pub const MAX_SIZE: usize = 1 + 1 + 1 + 32 + 32 + USERNAME_MAX_LEN + 32 + 4 + 4 + 8 + 8;
+    // is_initialized + version + bump + owner + game + username + current_ranked_game + total_ranked_games_played + total_wins + total_usd_spent_micro + total_usd_rewards_micro + created_at = 163 bytes
+    pub const MAX_SIZE: usize = 1 + 1 + 1 + 32 + 32 + USERNAME_MAX_LEN + 32 + 4 + 4 + 8 + 8 + 8;
 }

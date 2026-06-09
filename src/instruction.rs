@@ -46,6 +46,12 @@ pub enum IndieGamesInstruction {
     /// Special instruction to upgrade the data layout of GameAccounts when we need to add new fields, this way we can maintain backwards compatibility and not break existing games when we want to add new features
     UpgradeGameStateVersion,
 
+    // The Game developer can withdraw the entirety of his earnings
+    DeveloperWithdraw,
+
+    RewardUserAccount {
+        percentage_of_the_pool: u16,
+    },
 
 
     // -- User Account -----------------------------------------
@@ -55,6 +61,11 @@ pub enum IndieGamesInstruction {
         timestamp: u64,
         /// The token the user wants to pay with (e.g. SOL, SKR, SLICE, USDC), this is needed to determine the price using the oracle and transfer the funds to the game account
         payment_token: Pubkey,
+    },
+
+    WithdrawRewards {
+        // The timestamp
+        timestamp: u64,
     },
 
 
@@ -68,5 +79,19 @@ pub enum IndieGamesInstruction {
     JoinRankedGame {
         ranked_game_id: u64,
         payment_token: Pubkey,
+    },
+
+    UpdateRankedGameStatus {
+        ranked_game_id: u64,
+        new_status: u8,
+    },
+
+    RewardWinner {
+        ranked_game_id: u64,
+        amount_usd_micro: u16,
+    },
+
+    CloseRankedGame {
+        ranked_game_id: u64,
     },
 }

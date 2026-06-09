@@ -11,7 +11,7 @@ use solana_program::{
 };
 
 use crate::{
-    constants::{ORACLE_DISCRIMINATOR, PROGRAM_ID},
+    constants::{ORACLE_DISCRIMINATOR, PROGRAM_ID, PaymentToken},
     helpers::{assert_authority, find_oracle_pda, load_oracle},
     state::oracle::OraclePriceState
 };
@@ -132,4 +132,13 @@ pub fn update_oracle_prices(
         slice_price_usd_micro_per_atom,
     );
     Ok(())
+}
+
+pub fn price_for(oracle: &OraclePriceState, token: &PaymentToken) -> u64 {
+    match token {
+        PaymentToken::SOL => oracle.sol_price_usd_micro_per_lamport,
+        PaymentToken::SKR => oracle.skr_price_usd_micro_per_atom,
+        PaymentToken::SLICE => oracle.slice_price_usd_micro_per_atom,
+        PaymentToken::USDC => 1_000_000, // USDC is always $1.00 by definition
+    }
 }

@@ -98,6 +98,16 @@ impl Processor {
                 msg!("Instruction: UpgradeGameStateVersion");
                 game::upgrade_game_version(accounts)
             }
+            IndieGamesInstruction::DeveloperWithdraw => {
+                msg!("Instruction: DeveloperWithdraw");
+                game::developer_withdraw(accounts)
+            }
+            IndieGamesInstruction::RewardUserAccount {
+                percentage_of_the_pool
+            } => {
+                msg!("Instruction: RewardUserAccount");
+                game::reward_user_account(accounts, percentage_of_the_pool)
+            }
 
             // -- USER ACCOUNT ------------------------------------------------------
             IndieGamesInstruction::CreateUserAccount {
@@ -107,6 +117,12 @@ impl Processor {
             } => {
                 msg!("Instruction: CreateUserAccount");
                 user_account::create_user_account(accounts, 1, username, timestamp, payment_token)
+            }
+            IndieGamesInstruction::WithdrawRewards {
+                timestamp
+            } => {
+                msg!("Instruction: WithdrawRewards");
+                user_account::withdraw_rewards(accounts, timestamp)
             }
 
             // -- RANKED GAME ------------------------------------------------------
@@ -124,6 +140,29 @@ impl Processor {
             } => {
                 msg!("Instruction: JoinRankedGame");
                 ranked_game::join_ranked_game(accounts, ranked_game_id, payment_token)
+            }
+
+            IndieGamesInstruction::UpdateRankedGameStatus {
+                ranked_game_id,
+                new_status
+            } => {
+                msg!("Instruction: UpdateRankedGameStatus");
+                ranked_game::update_ranked_game_status(accounts, ranked_game_id, new_status)
+            }
+
+            IndieGamesInstruction::RewardWinner {
+                ranked_game_id,
+                amount_usd_micro
+            } => {
+                msg!("Instruction: RewardWinner");
+                ranked_game::reward_winner(accounts, ranked_game_id, amount_usd_micro)
+            }
+
+            IndieGamesInstruction::CloseRankedGame {
+                ranked_game_id
+            } => {
+                msg!("Instruction: CloseRankedGame");
+                ranked_game::close_ranked_game(accounts, ranked_game_id)
             }
         }
     }

@@ -12,7 +12,15 @@ use solana_program::{
     sysvar::Sysvar,
     pubkey,
     pubkey::Pubkey,
+    program_pack::Pack,
 };
+
+use spl_token::{
+    instruction::transfer_checked,
+    instruction::transfer,
+    state::Account as SplTokenAccount,
+};
+use spl_associated_token_account::get_associated_token_address;
 
 use crate::{
     constants::{PROGRAM_ID, PaymentToken, SKR_MINT, SLICE_MINT, USDC_MINT},
@@ -149,6 +157,7 @@ pub fn create_user_account<'a>(
         total_wins: 0,
         total_usd_spent_micro: 0,
         total_usd_rewards_micro: 0,
+        created_at: timestamp,
     };
 
     user_data.serialize(&mut &mut user_account.data.borrow_mut()[..])?;
@@ -164,6 +173,175 @@ pub fn create_user_account<'a>(
     let title = String::from_utf8_lossy(&game_data.game_title);
     let title = title.trim_matches(char::from(0));
     msg!("[{}] Total users so far: {}", title, game_data.total_users);
+
+    Ok(())
+}
+
+pub fn withdraw_rewards<'a>(
+    accounts: &'a [AccountInfo<'a>],
+    timestamp: u64,
+) -> ProgramResult {
+    let iter = &mut accounts.iter();
+
+    let user_wallet = next_account_info(iter)?;     // owner of the user account & signer
+    let game_account = next_account_info(iter)?;    // game PDA (for game_title -> user PDA derivation)
+    let user_account = next_account_info(iter)?;    // user's UserAccount PDA (owns the source ATAs + holds SOL)
+    let user_skr_ata = next_account_info(iter)?;
+    let user_slice_ata = next_account_info(iter)?;
+    let user_usdc_ata = next_account_info(iter)?;
+    let destination_skr_ata = next_account_info(iter)?;
+    let destination_slice_ata = next_account_info(iter)?;
+    let destination_usdc_ata = next_account_info(iter)?;
+    let token_program = next_account_info(iter)?;
+
+    if !user_wallet.is_signer {
+        msg!("User wallet must be a signer");
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    // -- Validate the user account ------------------------------------------------
+    if user_account.owner != &PROGRAM_ID {
+        msg!("User account not owned by program");
+        return Err(ProgramError::IllegalOwner);
+    }
+    let user_data = UserAccount::try_from_slice(&user_account.data.borrow())
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if !user_data.is_initialized {
+        msg!("User account not initialized");
+        return Err(ProgramError::UninitializedAccount);
+    }
+
+    // Only the wallet that owns this user account may withdraw its rewards.
+    if user_data.owner != *user_wallet.key {
+        msg!("Only the user account owner can withdraw rewards");
+        return Err(ProgramError::IllegalOwner);
+    }
+
+    // The user account must belong to the supplied game account.
+    if user_data.game != *game_account.key {
+        msg!("User account game mismatch");
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // -- Re-derive the user PDA + bump so it can sign the SPL transfers -----------
+    let (user_pda, user_bump) =
+        find_user_account_pda(&user_data.owner, &user_data.game, timestamp);
+    if user_pda != *user_account.key {
+        msg!("User account PDA derivation mismatch");
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let ts_bytes = timestamp.to_le_bytes();
+    let signer_seeds: &[&[u8]] = &[
+        b"igp_user",
+        user_data.owner.as_ref(),
+        user_data.game.as_ref(),
+        &ts_bytes,
+        &[user_bump],
+    ];
+
+    // -- Drain each SPL pool + sweep surplus SOL to the user wallet ---------------
+    withdraw_user_rewards(
+        user_account, user_wallet, user_skr_ata, destination_skr_ata,
+        &PaymentToken::SKR, token_program, signer_seeds, false, "SKR",
+    )?;
+    withdraw_user_rewards(
+        user_account, user_wallet, user_slice_ata, destination_slice_ata,
+        &PaymentToken::SLICE, token_program, signer_seeds, false, "SLICE",
+    )?;
+    // Sweep SOL on the final call so all three SPL transfers settle first.
+    withdraw_user_rewards(
+        user_account, user_wallet, user_usdc_ata, destination_usdc_ata,
+        &PaymentToken::USDC, token_program, signer_seeds, true, "USDC",
+    )?;
+
+    msg!(
+        "Reward withdraw complete for user account {}",
+        user_account.key
+    );
+    Ok(())
+}
+
+/// Transfer the entire balance of one user-owned ATA to a destination ATA, and
+/// (optionally) sweep the user PDA's surplus native SOL (above rent-exemption)
+/// to the user wallet. No-op on an empty/uninitialized source ATA.
+#[allow(clippy::too_many_arguments)]
+fn withdraw_user_rewards<'a>(
+    user_account: &AccountInfo<'a>,
+    user_wallet: &AccountInfo<'a>,
+    source_ata: &AccountInfo<'a>,
+    destination_ata: &AccountInfo<'a>,
+    token: &PaymentToken,
+    token_program: &AccountInfo<'a>,
+    signer_seeds: &[&[u8]],
+    sweep_sol: bool,
+    label: &str,
+) -> ProgramResult {
+    let mint = token.mint();
+
+    // Verify the source is the user PDA's canonical ATA for this mint.
+    let expected_source = get_associated_token_address(user_account.key, &mint);
+    if expected_source != *source_ata.key {
+        msg!("{} source ATA address mismatch", label);
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Skip the SPL transfer if the source doesn't exist yet.
+    if source_ata.data_is_empty() {
+        msg!("{} source ATA does not exist, skipping", label);
+    } else {
+        let source_state = SplTokenAccount::unpack(&source_ata.data.borrow())
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+
+        if source_state.owner != *user_account.key {
+            msg!("{} source ATA not owned by user PDA", label);
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if source_state.mint != mint {
+            msg!("{} source ATA mint mismatch", label);
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        let amount = source_state.amount;
+        if amount == 0 {
+            msg!("{} pool empty, nothing to withdraw", label);
+        } else {
+            invoke_signed(
+                &transfer(
+                    token_program.key,
+                    source_ata.key,
+                    destination_ata.key,
+                    user_account.key, // authority = user PDA (owns the source ATA)
+                    &[],
+                    amount,
+                )?,
+                &[
+                    source_ata.clone(),
+                    destination_ata.clone(),
+                    user_account.clone(),
+                    token_program.clone(),
+                ],
+                &[signer_seeds],
+            )?;
+            msg!("{} withdrew {} base units to destination", label, amount);
+        }
+    }
+
+    // Sweep surplus native SOL (above rent-exemption) from the user PDA.
+    if sweep_sol {
+        let rent = Rent::get()?;
+        let min_rent = rent.minimum_balance(user_account.data_len());
+        let withdrawable = user_account.lamports().saturating_sub(min_rent);
+
+        if withdrawable > 0 {
+            // PDA is program-owned: move lamports by direct field mutation.
+            **user_account.try_borrow_mut_lamports()? -= withdrawable;
+            **user_wallet.try_borrow_mut_lamports()? += withdrawable;
+            msg!("Withdrew {} excess SOL lamports to user wallet", withdrawable);
+        } else {
+            msg!("No excess SOL to withdraw");
+        }
+    }
 
     Ok(())
 }
